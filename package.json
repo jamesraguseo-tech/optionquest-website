@@ -3,8 +3,12 @@
   "version": "1.0.0",
   "description": "Landing page and serverless leaderboard backend for OptionQuest Mobile",
   "main": "index.html",
+  "type": "module",
   "scripts": {
     "start": "echo 'Static project: deploy directly to Vercel'"
+  },
+  "dependencies": {
+    "ioredis": "^5.4.1"
   },
   "engines": {
     "node": ">=18.0.0"

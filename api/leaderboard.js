@@ -1,4 +1,7 @@
-// Fetch top scores from Vercel KV Redis database
+import Redis from 'ioredis';
+
+let redis;
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,31 +16,19 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-
-  if (!url || !token) {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
     return res.status(500).json({ error: 'Database connection configuration missing' });
   }
 
   try {
-    // Fetch the top 100 players from the sorted set (high to low)
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(['ZREVRANGE', 'leaderboard', 0, 99, 'WITHSCORES']),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(500).json({ error: 'Database error', details: data });
+    // Initialize Redis lazily
+    if (!redis) {
+      redis = new Redis(redisUrl);
     }
 
-    const rawList = data.result || [];
+    // Fetch the top 100 players from the sorted set (high to low)
+    const rawList = await redis.zrevrange('leaderboard', 0, 99, 'WITHSCORES');
     const formattedLeaderboard = [];
 
     // Parse flat array [username1, score1, username2, score2, ...] into objects

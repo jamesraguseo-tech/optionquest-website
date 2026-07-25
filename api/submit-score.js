@@ -1,3 +1,7 @@
+import Redis from 'ioredis';
+
+let redis;
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -26,31 +30,21 @@ export default async function handler(req, res) {
   // Sanitize username and limit length
   const cleanUsername = username.trim().substring(0, 20);
 
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-
-  if (!url || !token) {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
     return res.status(500).json({ error: 'Database connection configuration missing' });
   }
 
   try {
-    // Send command to Vercel KV REST API
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(['ZADD', 'leaderboard', parsedScore, cleanUsername]),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(500).json({ error: 'Database error', details: data });
+    // Initialize Redis lazily
+    if (!redis) {
+      redis = new Redis(redisUrl);
     }
 
-    return res.status(200).json({ success: true, result: data.result });
+    // Add player and score to sorted set
+    const result = await redis.zadd('leaderboard', parsedScore, cleanUsername);
+
+    return res.status(200).json({ success: true, result });
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
