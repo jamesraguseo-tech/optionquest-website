@@ -1,0 +1,12 @@
+{
+  "name": "optionquest-website",
+  "version": "1.0.0",
+  "description": "Landing page and serverless leaderboard backend for OptionQuest Mobile",
+  "main": "index.html",
+  "scripts": {
+    "start": "echo 'Static project: deploy directly to Vercel'"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
