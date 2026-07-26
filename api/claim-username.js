@@ -16,24 +16,25 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { username, score, deviceToken } = req.body;
+  const { username, deviceToken } = req.body;
 
   if (!username || typeof username !== 'string' || username.trim().length === 0) {
     return res.status(400).json({ error: 'Invalid username' });
-  }
-
-  const parsedScore = parseInt(score, 10);
-  if (isNaN(parsedScore)) {
-    return res.status(400).json({ error: 'Invalid score' });
   }
 
   if (!deviceToken || typeof deviceToken !== 'string' || deviceToken.trim().length === 0) {
     return res.status(400).json({ error: 'Invalid device token' });
   }
 
-  // Sanitize values
+  // Sanitize and limit username length
   const cleanUsername = username.trim().substring(0, 20);
   const cleanToken = deviceToken.trim();
+
+  // Validate username format (no spaces, only alphanumeric and underscores)
+  const usernameRegex = /^[a-zA-Z0-9_]+$/;
+  if (!usernameRegex.test(cleanUsername)) {
+    return res.status(400).json({ error: 'Username must contain only letters, numbers, and underscores' });
+  }
 
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) {
@@ -46,24 +47,26 @@ export default async function handler(req, res) {
       redis = new Redis(redisUrl);
     }
 
-    // 1. Verify device ownership of the username (case-insensitive check)
+    // Check if the username is already registered to a device token
     const registeredToken = await redis.hget('registered_usernames', cleanUsername.toLowerCase());
 
     if (!registeredToken) {
-      return res.status(403).json({ error: 'Username must be claimed before submitting scores' });
+      // Username is available, claim it!
+      // Store under lowercase to ensure case-insensitive uniqueness, but save the display format
+      await redis.hset('registered_usernames', cleanUsername.toLowerCase(), cleanToken);
+      // We also store a mapping of the exact display case for display rendering
+      await redis.hset('username_display_cases', cleanUsername.toLowerCase(), cleanUsername);
+      
+      return res.status(200).json({ success: true, claimed: true });
     }
 
-    if (registeredToken !== cleanToken) {
-      return res.status(403).json({ error: 'Access denied: Device token mismatch' });
+    if (registeredToken === cleanToken) {
+      // Username is already claimed by this device, allowed to keep it
+      return res.status(200).json({ success: true, claimed: true, message: 'Already owned by this device' });
     }
 
-    // 2. Fetch the correct case-sensitive display name registered
-    const displayUsername = await redis.hget('username_display_cases', cleanUsername.toLowerCase()) || cleanUsername;
-
-    // 3. Add player and score to sorted set
-    const result = await redis.zadd('leaderboard', parsedScore, displayUsername);
-
-    return res.status(200).json({ success: true, result });
+    // Username is claimed by a different device token
+    return res.status(409).json({ success: false, error: 'Username already taken' });
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
