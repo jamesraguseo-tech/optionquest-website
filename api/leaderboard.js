@@ -32,13 +32,24 @@ export default async function handler(req, res) {
     const formattedLeaderboard = [];
 
     // Parse flat array [username1, score1, username2, score2, ...] into objects
+    let rank = 1;
     for (let i = 0; i < rawList.length; i += 2) {
       const username = rawList[i];
       const score = parseInt(rawList[i + 1], 10);
+      
+      // Filter out and clean test users (e.g. test_user_123, test_123, testuser)
+      const isTestUser = /test_user|^test_|^testuser|^test\d+/i.test(username);
+      if (isTestUser) {
+        await redis.zrem('leaderboard', username);
+        await redis.hdel('registered_usernames', username.toLowerCase());
+        await redis.hdel('username_display_cases', username.toLowerCase());
+        continue;
+      }
+
       formattedLeaderboard.push({
         username,
         score: isNaN(score) ? 0 : score,
-        rank: (i / 2) + 1,
+        rank: rank++,
       });
     }
 

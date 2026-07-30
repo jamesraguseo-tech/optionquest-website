@@ -52,6 +52,20 @@ export default async function handler(req, res) {
 
     if (!registeredToken) {
       // Username is available, claim it!
+      
+      // Cleanup old usernames owned by this device token to prevent duplicates on the leaderboard
+      const allRegistered = await redis.hgetall('registered_usernames');
+      for (const [oldLowerName, token] of Object.entries(allRegistered)) {
+        if (token === cleanToken && oldLowerName !== cleanUsername.toLowerCase()) {
+          await redis.hdel('registered_usernames', oldLowerName);
+          const oldDisplay = await redis.hget('username_display_cases', oldLowerName);
+          if (oldDisplay) {
+            await redis.zrem('leaderboard', oldDisplay);
+            await redis.hdel('username_display_cases', oldLowerName);
+          }
+        }
+      }
+
       // Store under lowercase to ensure case-insensitive uniqueness, but save the display format
       await redis.hset('registered_usernames', cleanUsername.toLowerCase(), cleanToken);
       // We also store a mapping of the exact display case for display rendering
