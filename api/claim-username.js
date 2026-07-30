@@ -63,6 +63,9 @@ export default async function handler(req, res) {
             await redis.zrem('leaderboard', oldDisplay);
             await redis.hdel('username_display_cases', oldLowerName);
           }
+          // Defensive cleanups to ensure no legacy casing escapes deletion
+          await redis.zrem('leaderboard', oldLowerName);
+          await redis.zrem('leaderboard', oldLowerName.toUpperCase());
         }
       }
 
