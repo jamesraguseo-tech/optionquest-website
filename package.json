@@ -5,10 +5,13 @@
   "main": "index.html",
   "type": "module",
   "scripts": {
-    "start": "echo 'Static project: deploy directly to Vercel'"
+    "start": "echo 'Static project: deploy directly to Vercel'",
+    "test": "node scripts/security-audit-test.js",
+    "lint": "node --check api/*.js api/**/*.js lib/*.js"
   },
   "dependencies": {
-    "ioredis": "^5.4.1"
+    "@supabase/supabase-js": "2.49.1",
+    "ioredis": "5.4.1"
   },
   "engines": {
     "node": ">=18.0.0"
