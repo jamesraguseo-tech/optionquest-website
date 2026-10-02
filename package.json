@@ -10,7 +10,7 @@
     "lint": "node --check api/*.js api/**/*.js lib/*.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.49.1",
+    "@supabase/supabase-js": "2.117.2",
     "ioredis": "5.4.1"
   },
   "engines": {
