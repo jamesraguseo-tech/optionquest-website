@@ -4,6 +4,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { constantTimeCompare, requireCronAuth } from '../lib/cron-auth.js';
 import { generateSecureTemporaryPassword } from '../lib/supabase-admin.js';
+import challengesHandler from '../api/challenges.js';
+import publishChallengeHandler from '../api/admin/publish-challenge.js';
+import userTradesHandler from '../api/user-trades.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,6 +159,212 @@ runTest('.npmrc enforces save-exact=true and package.json strips carets', () => 
   for (const [dep, version] of Object.entries(pkg.dependencies || {})) {
     assert.strictEqual(/^\d/.test(version), true, `Dependency "${dep}" must be pinned without carets/tildes (got: ${version})`);
   }
+});
+
+// 6. Bundle 5 Redis LiveOps Challenges & Cross-Device Public Trades Tests
+console.log('\n--- 6. Bundle 5 Redis LiveOps Challenges & Cross-Device Public Trades ---');
+
+function createMockRedis() {
+  const kv = new Map();
+  const hashes = new Map();
+  return {
+    pipeline() {
+      const ops = [];
+      return {
+        incr(key) {
+          ops.push(() => {
+            const val = (kv.get(key) || 0) + 1;
+            kv.set(key, val);
+            return [null, val];
+          });
+        },
+        ttl() {
+          ops.push(() => [null, 60]);
+        },
+        async exec() {
+          return ops.map((fn) => fn());
+        },
+      };
+    },
+    async incr(key) {
+      const val = (kv.get(key) || 0) + 1;
+      kv.set(key, val);
+      return val;
+    },
+    async expire() {
+      return 1;
+    },
+    async ttl() {
+      return 60;
+    },
+    async get(key) {
+      return kv.get(key) ?? null;
+    },
+    async set(key, val) {
+      kv.set(key, val);
+      return 'OK';
+    },
+    async hget(hash, field) {
+      const h = hashes.get(hash);
+      return h ? (h.get(field) ?? null) : null;
+    },
+    async hset(hash, field, val) {
+      if (!hashes.has(hash)) hashes.set(hash, new Map());
+      hashes.get(hash).set(field, val);
+      return 1;
+    },
+    async hgetall(hash) {
+      const h = hashes.get(hash);
+      if (!h) return {};
+      return Object.fromEntries(h.entries());
+    },
+  };
+}
+
+function createMockRes() {
+  const headers = {};
+  let statusCode = 200;
+  let jsonBody = null;
+  return {
+    headers,
+    get statusCode() {
+      return statusCode;
+    },
+    get body() {
+      return jsonBody;
+    },
+    setHeader(k, v) {
+      headers[k] = v;
+    },
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(payload) {
+      jsonBody = payload;
+      return this;
+    },
+    end() {
+      return this;
+    },
+  };
+}
+
+await runAsyncTest('publish-challenge rejects unauthorized requests (401) and accepts valid CRON_SECRET', async () => {
+  process.env.CRON_SECRET = 'bundle5_cron_secret_test';
+  const mockRedis = createMockRedis();
+
+  // 1. Unauthorized attempt
+  const unauthRes = createMockRes();
+  await publishChallengeHandler(
+    { method: 'POST', headers: { authorization: 'Bearer invalid_token' }, body: {}, _mockRedis: mockRedis },
+    unauthRes
+  );
+  assert.strictEqual(unauthRes.statusCode, 401);
+
+  // 2. Authorized publish of Week 2 Silicon Volatility Defense
+  const validRes = createMockRes();
+  await publishChallengeHandler(
+    {
+      method: 'POST',
+      headers: { authorization: 'Bearer bundle5_cron_secret_test' },
+      body: {
+        id: 'challenge_silicon_volatility_w2',
+        title: 'Silicon Volatility Defense',
+        description: 'Execute 2 disciplined trades risking <=5% during high IV',
+        category: 'risk',
+        progress_metric: 'disciplined_sizing',
+        target: 2,
+        xp_reward: 250,
+        coin_reward: 300,
+        priority: 1,
+      },
+      _mockRedis: mockRedis,
+    },
+    validRes
+  );
+  assert.strictEqual(validRes.statusCode, 200);
+  assert.strictEqual(validRes.body.success, true);
+  assert.strictEqual(validRes.body.publishedCount, 1);
+
+  // 3. Verify GET /api/challenges returns the published challenge and sets Edge Cache headers
+  const getRes = createMockRes();
+  await challengesHandler(
+    { method: 'GET', headers: {}, _mockRedis: mockRedis },
+    getRes
+  );
+  assert.strictEqual(getRes.statusCode, 200);
+  assert.ok(getRes.headers['Cache-Control'].includes('s-maxage=3600'), 'Must include s-maxage=3600 Edge cache header');
+  assert.strictEqual(getRes.body.challenges[0].id, 'challenge_silicon_volatility_w2');
+});
+
+await runAsyncTest('user-trades enforces deviceToken ownership (403 on mismatch), sanitizes fields, and caps at 5 trades', async () => {
+  const mockRedis = createMockRedis();
+  await mockRedis.hset('registered_usernames', 'alpha_trader', 'device_token_abc');
+
+  // 1. Reject mismatched device token
+  const mismatchRes = createMockRes();
+  await userTradesHandler(
+    {
+      method: 'POST',
+      headers: {},
+      body: {
+        username: 'Alpha_Trader',
+        deviceToken: 'wrong_token_999',
+        trade: { symbol: 'NVDA', type: 'call', strike: 140, entryPrice: 4.5, exitPrice: 6.2, pnl: 170, pnlPercent: 37.8 },
+      },
+      _mockRedis: mockRedis,
+    },
+    mismatchRes
+  );
+  assert.strictEqual(mismatchRes.statusCode, 403);
+
+  // 2. Accept 6 trades from valid owner and verify cap at 5 + sanitization
+  for (let i = 1; i <= 6; i++) {
+    const postRes = createMockRes();
+    await userTradesHandler(
+      {
+        method: 'POST',
+        headers: {},
+        body: {
+          username: 'Alpha_Trader',
+          deviceToken: 'device_token_abc',
+          trade: {
+            symbol: `nvda<script>`,
+            type: 'call',
+            strike: 100 + i * 5,
+            entryPrice: 2.5,
+            exitPrice: 3.75,
+            pnl: 125,
+            pnlPercent: 50.0,
+            portfolioRiskPercent: 3.2,
+            maliciousField: 'should_be_stripped',
+          },
+        },
+        _mockRedis: mockRedis,
+      },
+      postRes
+    );
+    assert.strictEqual(postRes.statusCode, 200);
+  }
+
+  // 3. GET /api/user-trades?username=Alpha_Trader returns exactly 5 sanitized trades
+  const getRes = createMockRes();
+  await userTradesHandler(
+    {
+      method: 'GET',
+      headers: {},
+      query: { username: 'Alpha_Trader' },
+      _mockRedis: mockRedis,
+    },
+    getRes
+  );
+  assert.strictEqual(getRes.statusCode, 200);
+  assert.strictEqual(getRes.body.trades.length, 5);
+  assert.strictEqual(getRes.body.trades[0].symbol, 'NVDASCRIPT');
+  assert.strictEqual(getRes.body.trades[0].maliciousField, undefined);
+  assert.strictEqual(getRes.body.trades[0].entryPrice, 2.5);
+  assert.strictEqual(getRes.body.trades[0].exitPrice, 3.75);
 });
 
 console.log('\n════════════════════════════════════════════════════════════════');
